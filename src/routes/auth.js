@@ -8,12 +8,29 @@ const { protect } = require('../middleware/auth');
 // Register
 router.post('/register', async (req, res) => {
   try {
+    console.log('Registration request body:', req.body);
     const { name, email, password, leetcodeUsername } = req.body;
 
+    // Validate required fields
+    if (!name || !email || !password || !leetcodeUsername) {
+      console.log('Missing required fields:', { name: !!name, email: !!email, password: !!password, leetcodeUsername: !!leetcodeUsername });
+      return res.status(400).json({ 
+        message: 'Please provide all required fields: name, email, password, and LeetCode username' 
+      });
+    }
+
     // Check if user already exists
-    const existingUser = await User.findOne({ email });
+    const existingUser = await User.findOne({ 
+      $or: [{ email }, { leetcodeUsername }] 
+    });
+    
     if (existingUser) {
-      return res.status(400).json({ message: 'User already exists' });
+      console.log('User already exists:', { email, leetcodeUsername });
+      return res.status(400).json({ 
+        message: existingUser.email === email ? 
+          'Email already registered' : 
+          'LeetCode username already registered' 
+      });
     }
 
     // Hash password
@@ -29,6 +46,7 @@ router.post('/register', async (req, res) => {
     });
 
     await user.save();
+    console.log('User registered successfully:', { email, leetcodeUsername });
 
     // Generate token
     const token = jwt.sign(
@@ -48,7 +66,15 @@ router.post('/register', async (req, res) => {
       }
     });
   } catch (error) {
-    res.status(500).json({ message: 'Server error' });
+    console.error('Registration error:', {
+      name: error.name,
+      message: error.message,
+      stack: error.stack
+    });
+    res.status(500).json({ 
+      message: 'Server error during registration',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 });
 
