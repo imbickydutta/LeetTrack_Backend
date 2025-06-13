@@ -16,16 +16,24 @@ exports.updateProgress = async (req, res) => {
       return res.status(404).json({ message: 'Question not found' });
     }
 
+    // Prepare update object
+    const updateData = {
+      isSolved,
+      solutionUrl,
+      notes,
+      code,
+      language,
+      lastUpdated: new Date()
+    };
+
+    // Set solvedAt if the problem is being marked as solved
+    if (isSolved) {
+      updateData.solvedAt = new Date();
+    }
+
     const progress = await UserProgress.findOneAndUpdate(
       { userId, questionId },
-      {
-        isSolved,
-        solutionUrl,
-        notes,
-        code,
-        language,
-        lastUpdated: new Date()
-      },
+      updateData,
       { new: true, upsert: true }
     );
 
