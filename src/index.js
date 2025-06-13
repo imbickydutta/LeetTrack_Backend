@@ -9,6 +9,7 @@ const userRoutes = require('./routes/users');
 const questionRoutes = require('./routes/questions');
 const progressRoutes = require('./routes/progress');
 const adminRoutes = require('./routes/admin');
+const leaderboardRoutes = require('./routes/leaderboard');
 
 const app = express();
 
@@ -23,6 +24,7 @@ app.use('/api/users', userRoutes);
 app.use('/api/questions', questionRoutes);
 app.use('/api/progress', progressRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/leaderboard', leaderboardRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {

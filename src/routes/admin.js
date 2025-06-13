@@ -11,4 +11,10 @@ router.use(authorize('admin'));
 router.get('/users', adminController.getAllUsers);
 router.get('/users/:userId/stats', adminController.getUserStats);
 
+// Submission Management routes
+router.get('/submissions', adminController.getAllSubmissions);
+router.get('/topics', adminController.getAllTopics);
+router.get('/users/list', adminController.getUsersList);
+router.put('/submissions/:submissionId/review', adminController.reviewSubmission);
+
 module.exports = router; 

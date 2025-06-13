@@ -138,4 +138,103 @@ exports.getUserStats = async (req, res) => {
     console.error('Error fetching user stats:', error);
     res.status(500).json({ message: 'Server error' });
   }
+};
+
+exports.getAllSubmissions = async (req, res) => {
+  try {
+    const submissions = await Progress.find()
+      .populate({
+        path: 'user',
+        select: 'name'
+      })
+      .populate({
+        path: 'question',
+        select: 'title topics'
+      })
+      .sort({ createdAt: -1 });
+
+    const formattedSubmissions = submissions.map(submission => ({
+      _id: submission._id,
+      userName: submission.user.name,
+      questionTitle: submission.question.title,
+      topic: submission.question.topics[0],
+      submittedAt: submission.createdAt,
+      reviewStatus: submission.reviewStatus,
+      reviewFeedback: submission.reviewFeedback,
+      solutionUrl: submission.solutionUrl
+    }));
+
+    res.json(formattedSubmissions);
+  } catch (error) {
+    console.error('Error fetching submissions:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+exports.getAllTopics = async (req, res) => {
+  try {
+    const topics = await Question.distinct('topics');
+    res.json(topics);
+  } catch (error) {
+    console.error('Error fetching topics:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+exports.getUsersList = async (req, res) => {
+  try {
+    const users = await User.find().select('name _id');
+    res.json(users);
+  } catch (error) {
+    console.error('Error fetching users list:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+exports.reviewSubmission = async (req, res) => {
+  try {
+    const { submissionId } = req.params;
+    const { reviewStatus, reviewFeedback } = req.body;
+
+    if (!['correct', 'incorrect', 'needs_optimization'].includes(reviewStatus)) {
+      return res.status(400).json({ message: 'Invalid review status' });
+    }
+
+    const submission = await Progress.findByIdAndUpdate(
+      submissionId,
+      {
+        reviewStatus,
+        reviewFeedback,
+        reviewedAt: new Date(),
+        reviewedBy: req.user._id
+      },
+      { new: true }
+    ).populate({
+      path: 'user',
+      select: 'name'
+    }).populate({
+      path: 'question',
+      select: 'title topics'
+    });
+
+    if (!submission) {
+      return res.status(404).json({ message: 'Submission not found' });
+    }
+
+    const formattedSubmission = {
+      _id: submission._id,
+      userName: submission.user.name,
+      questionTitle: submission.question.title,
+      topic: submission.question.topics[0],
+      submittedAt: submission.submittedAt,
+      reviewStatus: submission.reviewStatus,
+      reviewFeedback: submission.reviewFeedback,
+      solutionUrl: submission.solutionUrl
+    };
+
+    res.json(formattedSubmission);
+  } catch (error) {
+    console.error('Error reviewing submission:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
 }; 

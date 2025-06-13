@@ -25,6 +25,22 @@ const progressSchema = new mongoose.Schema({
   },
   solvedAt: {
     type: Date
+  },
+  reviewStatus: {
+    type: String,
+    enum: ['pending', 'correct', 'incorrect', 'needs_optimization'],
+    default: 'pending'
+  },
+  reviewFeedback: {
+    type: String,
+    default: ''
+  },
+  reviewedAt: {
+    type: Date
+  },
+  reviewedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
   }
 }, {
   timestamps: true
