@@ -2,15 +2,26 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 
-exports.register = async (req, res) => {
+exports.registerUser = async (req, res) => {
   try {
+    console.log('Registration request body:', req.body);
     const { name, email, password, leetcodeUsername } = req.body;
+
+    // Validate required fields
+    if (!name || !email || !password || !leetcodeUsername) {
+      console.log('Missing required fields:', { name: !!name, email: !!email, password: !!password, leetcodeUsername: !!leetcodeUsername });
+      return res.status(400).json({ 
+        message: 'Please provide all required fields: name, email, password, and LeetCode username' 
+      });
+    }
 
     // Check if user already exists
     const existingUser = await User.findOne({ 
       $or: [{ email }, { leetcodeUsername }] 
     });
+    
     if (existingUser) {
+      console.log('User already exists:', { email, leetcodeUsername });
       return res.status(400).json({ 
         message: existingUser.email === email ? 
           'Email already registered' : 
@@ -31,104 +42,121 @@ exports.register = async (req, res) => {
     });
 
     await user.save();
+    console.log('User registered successfully:', { email, leetcodeUsername });
 
-    // Generate JWT token
+    // Generate token
     const token = jwt.sign(
       { userId: user._id },
       process.env.JWT_SECRET,
       { expiresIn: '7d' }
     );
-
-    // Return user data (excluding password) and token
-    const userData = {
-      _id: user._id,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-      leetcodeUsername: user.leetcodeUsername
-    };
 
     res.status(201).json({
       token,
-      user: userData
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        leetcodeUsername: user.leetcodeUsername
+      }
     });
   } catch (error) {
-    console.error('Registration error:', error);
-    res.status(500).json({ message: 'Server error' });
+    console.error('Registration error (controller):', {
+      name: error.name,
+      message: error.message,
+      stack: error.stack
+    });
+    res.status(500).json({ 
+      message: 'Server error during registration',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 };
 
-exports.login = async (req, res) => {
+exports.loginUser = async (req, res) => {
+  console.log('=== Login Request ===');
+  console.log('Body:', req.body);
+  
+  // Input validation
+  const { email, password } = req.body;
+  
+  // Check if email and password are provided
+  if (!email || !password) {
+    console.log('Missing credentials:', { email: !!email, password: !!password });
+    return res.status(400).json({
+      success: false,
+      message: 'Please provide both email and password'
+    });
+  }
+
   try {
-    console.log('Login attempt with body:', req.body);
-    const { email, password } = req.body;
-
-    // Validate input
-    if (!email || !password) {
-      console.log('Missing email or password');
-      return res.status(400).json({ message: 'Email and password are required' });
-    }
-
-    // Check if user exists
+    console.log('Finding user with email:', email);
+    // Find user by email and explicitly select password field
     const user = await User.findOne({ email }).select('+password');
+    
+    // Check if user exists
     if (!user) {
-      console.log('User not found for email:', email);
-      return res.status(400).json({ message: 'Invalid credentials' });
+      console.log('No user found with email:', email);
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid email or password'
+      });
     }
 
-    // Validate user has password
-    if (!user.password) {
-      console.error('User found but has no password set:', email);
-      return res.status(500).json({ message: 'Account error - please contact support' });
+    console.log('User found, checking password');
+    // Verify password using the model's method
+    const isPasswordValid = await user.comparePassword(password);
+    if (!isPasswordValid) {
+      console.log('Invalid password for user:', email);
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid email or password'
+      });
     }
 
-    // Verify password
-    try {
-      const isMatch = await bcrypt.compare(password, user.password);
-      if (!isMatch) {
-        console.log('Password mismatch for user:', email);
-        return res.status(400).json({ message: 'Invalid credentials' });
-      }
-    } catch (bcryptError) {
-      console.error('Password comparison error:', bcryptError);
-      return res.status(500).json({ message: 'Authentication error' });
-    }
-
-    // Check if JWT_SECRET is set
+    // Check if JWT_SECRET is configured
     if (!process.env.JWT_SECRET) {
-      console.error('JWT_SECRET is not set in environment variables');
-      return res.status(500).json({ message: 'Server configuration error' });
+      console.error('JWT_SECRET is not configured');
+      throw new Error('JWT_SECRET is not configured');
     }
 
+    console.log('Generating token for user:', email);
     // Generate JWT token
     const token = jwt.sign(
-      { userId: user._id },
+      { 
+        userId: user._id,
+        role: user.role 
+      },
       process.env.JWT_SECRET,
       { expiresIn: '7d' }
     );
 
-    // Return user data (excluding password) and token
-    const userData = {
-      _id: user._id,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-      leetcodeUsername: user.leetcodeUsername
-    };
-
     console.log('Login successful for user:', email);
-    res.json({
-      token,
-      user: userData
+    // Return user data and token
+    res.status(200).json({
+      success: true,
+      data: {
+        token,
+        user: {
+          id: user._id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          leetcodeUsername: user.leetcodeUsername
+        }
+      }
     });
+
   } catch (error) {
-    console.error('Login error details:', {
+    console.error('Login error details (controller):', {
+      name: error.name,
       message: error.message,
-      stack: error.stack,
-      name: error.name
+      stack: error.stack
     });
-    res.status(500).json({ 
-      message: 'Server error',
+    res.status(500).json({
+      success: false,
+      message: 'An error occurred during login',
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
@@ -136,13 +164,10 @@ exports.login = async (req, res) => {
 
 exports.getMe = async (req, res) => {
   try {
-    const user = await User.findById(req.user.userId).select('-password');
-    if (!user) {
-      return res.status(404).json({ message: 'User not found' });
-    }
+    const user = await User.findById(req.user._id).select('-password');
     res.json(user);
   } catch (error) {
-    console.error('Get user error:', error);
+    console.error('Error fetching current user (controller):', error); // More specific logging
     res.status(500).json({ message: 'Server error' });
   }
 }; 

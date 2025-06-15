@@ -1,32 +1,6 @@
 const Question = require('../models/Question');
 const UserProgress = require('../models/UserProgress');
-
-exports.getAllQuestions = async (req, res) => {
-  try {
-    console.log('Fetching all questions');
-    const questions = await Question.find().lean();
-    console.log('Total questions found:', questions.length);
-    
-    // Log day distribution
-    const dayDistribution = questions.reduce((acc, q) => {
-      acc[q.dayPlan] = (acc[q.dayPlan] || 0) + 1;
-      return acc;
-    }, {});
-    console.log('Day distribution:', dayDistribution);
-    
-    // Log sample questions with their day values
-    console.log('Sample questions:', questions.slice(0, 5).map(q => ({
-      title: q.title,
-      dayPlan: q.dayPlan,
-      dayPlanType: typeof q.dayPlan
-    })));
-    
-    res.json(questions);
-  } catch (error) {
-    console.error('Error fetching questions:', error);
-    res.status(500).json({ message: 'Server error' });
-  }
-};
+const Progress = require('../models/Progress');
 
 exports.getQuestionById = async (req, res) => {
   try {
@@ -48,35 +22,56 @@ exports.getQuestionById = async (req, res) => {
 
     res.json(question);
   } catch (error) {
-    console.error('Error fetching question:', error);
+    console.error('Error fetching question by ID:', error); // More specific logging
     res.status(500).json({ message: 'Server error' });
   }
 };
 
 exports.createQuestion = async (req, res) => {
   try {
-    const question = new Question(req.body);
+    const { title, leetcodeSlug, difficulty, topics, dayPlan, leetcodeUrl, description, solution } = req.body;
+
+    const question = new Question({
+      title,
+      leetcodeSlug,
+      difficulty,
+      topics,
+      dayPlan,
+      leetcodeUrl,
+      description,
+      solution
+    });
+
     await question.save();
     res.status(201).json(question);
   } catch (error) {
-    console.error('Error creating question:', error);
+    console.error('Error creating question (controller):', error);
     res.status(500).json({ message: 'Server error' });
   }
 };
 
 exports.updateQuestion = async (req, res) => {
   try {
-    const question = await Question.findByIdAndUpdate(
-      req.params.id,
-      req.body,
-      { new: true }
-    );
+    const { title, leetcodeSlug, difficulty, topics, dayPlan, leetcodeUrl, description, solution } = req.body;
+    const question = await Question.findById(req.params.id);
+
     if (!question) {
       return res.status(404).json({ message: 'Question not found' });
     }
+
+    if (title) question.title = title;
+    if (leetcodeSlug) question.leetcodeSlug = leetcodeSlug;
+    if (difficulty) question.difficulty = difficulty;
+    if (topics) question.topics = topics;
+    if (dayPlan) question.dayPlan = dayPlan;
+    if (leetcodeUrl) question.leetcodeUrl = leetcodeUrl;
+    if (description) question.description = description;
+    if (solution) question.solution = solution;
+
+    await question.save();
     res.json(question);
   } catch (error) {
-    console.error('Error updating question:', error);
+    console.error('Error updating question (controller):', error);
     res.status(500).json({ message: 'Server error' });
   }
 };
@@ -89,75 +84,100 @@ exports.deleteQuestion = async (req, res) => {
     }
     res.json({ message: 'Question deleted successfully' });
   } catch (error) {
-    console.error('Error deleting question:', error);
+    console.error('Error deleting question (controller):', error);
     res.status(500).json({ message: 'Server error' });
   }
 };
 
 exports.getQuestions = async (req, res) => {
   try {
-    const { topic, dayPlan, difficulty, status } = req.query;
+    const { topic, dayPlan, difficulty, status } = req.query; 
     const query = {};
 
-    if (topic) query.topics = topic;
+    if (difficulty) query.difficulty = difficulty;
+
+    if (topic) {
+      query.topics = topic;
+    } else if (req.query.topics) {
+      query.topics = { $in: req.query.topics.split(',') };
+    }
+
     if (dayPlan) {
       const dayNumber = Number(dayPlan);
       if (!isNaN(dayNumber)) {
-        query['dayPlan.$numberInt'] = dayNumber.toString();
+        query.dayPlan = dayNumber;
       }
     }
-    if (difficulty) query.difficulty = difficulty;
 
     console.log('Query parameters received:', { topic, dayPlan, difficulty, status });
     console.log('MongoDB query being used:', query);
 
-    // First verify the query
-    const count = await Question.countDocuments(query);
-    console.log('Number of questions matching query:', count);
-
-    const questions = await Question.find(query).lean();
-    console.log('Number of questions found:', questions.length);
-    console.log('First few questions:', questions.slice(0, 2).map(q => ({ 
-      title: q.title, 
+    let questions = await Question.find(query).lean();
+    console.log('Number of questions found before progress merge:', questions.length);
+    console.log('First few questions (pre-merge):', questions.slice(0, 2).map(q => ({
+      title: q.title,
       dayPlan: q.dayPlan,
-      dayPlanType: typeof q.dayPlan 
+      dayPlanType: typeof q.dayPlan
     })));
 
-    // If user is authenticated, merge with progress
     if (req.user) {
-      console.log('User ID for progress lookup:', req.user.userId);
-      const userProgress = await UserProgress.find({
-        userId: req.user.userId,
-        questionId: { $in: questions.map(q => q._id) }
+      console.log('User ID for progress lookup:', req.user._id); 
+
+      const userProgress = await Progress.find({
+        user: req.user._id,
+        question: { $in: questions.map(q => q._id) }
       }).lean();
 
       console.log('Found user progress entries:', userProgress.length);
-      console.log('Sample progress:', userProgress.slice(0, 2));
+      console.log('Sample progress:', userProgress.slice(0, 2).map(p => ({
+        questionId: p.question.toString(),
+        isSolved: p.isSolved
+      })));
 
       const progressMap = new Map(
-        userProgress.map(p => [p.questionId.toString(), p])
+        userProgress.map(p => [p.question.toString(), p])
       );
 
       questions.forEach(question => {
-        question.userProgress = progressMap.get(question._id.toString()) || null;
+        const questionProgress = progressMap.get(question._id.toString());
+        question.userProgress = questionProgress ? {
+          isSolved: questionProgress.isSolved,
+          solutionUrl: questionProgress.solutionUrl,
+          notes: questionProgress.notes,
+          solvedAt: questionProgress.solvedAt
+        } : {
+          isSolved: false,
+          solutionUrl: '',
+          notes: '',
+          solvedAt: null
+        };
       });
 
-      // Filter by solved/unsolved status
+      console.log('Questions after progress merge (first 5):', questions.slice(0, 5).map(q => ({
+        title: q.title,
+        userProgressSolved: q.userProgress?.isSolved,
+        userProgressExists: !!q.userProgress
+      })));
+
+      const preFilterSolvedCount = questions.filter(q => q.userProgress?.isSolved).length;
+      const preFilterUnsolvedCount = questions.filter(q => !q.userProgress?.isSolved).length;
+      console.log('Counts before final status filter: Solved -', preFilterSolvedCount, 'Unsolved -', preFilterUnsolvedCount);
+
       if (status === 'solved') {
-        const solvedQuestions = questions.filter(q => q.userProgress?.isSolved);
-        console.log('Filtered to solved questions:', solvedQuestions.length);
-        return res.json(solvedQuestions);
+        questions = questions.filter(q => q.userProgress?.isSolved);
+        console.log('Filtered to solved questions:', questions.length);
       } else if (status === 'unsolved') {
-        const unsolvedQuestions = questions.filter(q => !q.userProgress?.isSolved);
-        console.log('Filtered to unsolved questions:', unsolvedQuestions.length);
-        return res.json(unsolvedQuestions);
+        questions = questions.filter(q => !q.userProgress?.isSolved);
+        console.log('Filtered to unsolved questions:', questions.length);
       }
+    } else {
+      console.log('No user authenticated. Status filter not applied.');
     }
 
-    console.log('Sending all questions:', questions.length);
+    console.log('Sending final questions:', questions.length);
     res.json(questions);
   } catch (error) {
-    console.error('Error in getQuestions:', error);
+    console.error('Error in getQuestions (controller):', error);
     res.status(500).json({ message: 'Error fetching questions' });
   }
 };
@@ -217,6 +237,6 @@ exports.deleteAllQuestions = async (req, res) => {
     });
   } catch (error) {
     console.error('Error deleting all questions:', error);
-    res.status(500).json({ message: 'Error deleting questions' });
+    res.status(500).json({ message: 'Server error' });
   }
 }; 

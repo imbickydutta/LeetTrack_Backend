@@ -1,12 +1,13 @@
 const UserProgress = require('../models/UserProgress');
 const Question = require('../models/Question');
 const mongoose = require('mongoose');
+const Progress = require('../models/Progress');
 
 exports.updateProgress = async (req, res) => {
   try {
     const questionId = mongoose.Types.ObjectId.createFromHexString(req.params.questionId);
     const { isSolved, solutionUrl, notes, code, language } = req.body;
-    const userId = req.user.userId;
+    const userId = req.user._id;
 
     console.log('Updating progress:', { questionId, isSolved, solutionUrl, userId });
 
@@ -31,8 +32,8 @@ exports.updateProgress = async (req, res) => {
       updateData.solvedAt = new Date();
     }
 
-    const progress = await UserProgress.findOneAndUpdate(
-      { userId, questionId },
+    const progress = await Progress.findOneAndUpdate(
+      { user: userId, question: questionId },
       updateData,
       { new: true, upsert: true }
     );
@@ -50,9 +51,9 @@ exports.updateProgress = async (req, res) => {
 
 exports.getUserProgress = async (req, res) => {
   try {
-    const userId = req.user.userId;
-    const progress = await UserProgress.find({ userId })
-      .populate('questionId', 'title difficulty topics dayPlan leetcodeSlug leetcodeUrl')
+    const userId = req.user._id;
+    const progress = await Progress.find({ user: userId })
+      .populate('question', 'title difficulty topics dayPlan leetcodeSlug leetcodeUrl')
       .select('isSolved solutionUrl notes code language bookmarked lastUpdated')
       .lean();
 
@@ -65,108 +66,126 @@ exports.getUserProgress = async (req, res) => {
 
 exports.getUserTopicProgress = async (req, res) => {
   try {
-    const userId = req.user.userId;
-    const topic = req.params.topic;
+    const userId = req.user._id;
+    // Get all questions grouped by topic
+    const questions = await Question.find();
+    const progress = await Progress.find({
+      user: userId,
+      question: { $in: questions.map(q => q._id) }
+    });
 
-    if (!topic) {
-      return res.status(400).json({ message: 'Topic parameter is required' });
-    }
-
-    console.log('Fetching progress for topic:', topic);
-
-    const questions = await Question.find({ topics: topic })
-      .select('title difficulty topics dayPlan leetcodeSlug leetcodeUrl')
-      .lean();
-
-    console.log('Found questions for topic:', questions.length);
-
-    const progress = await UserProgress.find({
-      userId,
-      questionId: { $in: questions.map(q => q._id) }
-    })
-    .select('isSolved solutionUrl notes code language bookmarked lastUpdated')
-    .lean();
-
+    // Create a map of question progress
     const progressMap = new Map(
-      progress.map(p => [p.questionId.toString(), p])
+      progress.map(p => [p.question.toString(), p])
     );
 
-    const topicProgress = questions.map(question => ({
-      ...question,
-      userProgress: progressMap.get(question._id.toString()) || null
-    }));
-
-    // Calculate solved and total counts
-    const solved = topicProgress.filter(q => q.userProgress?.isSolved).length;
-    const total = topicProgress.length;
-
-    res.json({
-      solved,
-      total,
-      questions: topicProgress
+    // Calculate progress for each topic
+    const topicProgress = {};
+    questions.forEach(question => {
+      question.topics.forEach(topic => {
+        if (!topicProgress[topic]) {
+          topicProgress[topic] = {
+            total: 0,
+            solved: 0
+          };
+        }
+        topicProgress[topic].total++;
+        if (progressMap.get(question._id.toString())?.isSolved) {
+          topicProgress[topic].solved++;
+        }
+      });
     });
+
+    res.json(topicProgress);
   } catch (error) {
-    console.error('Error fetching topic progress:', error);
+    console.error('Error fetching topic progress (controller):', error); 
     res.status(500).json({ message: 'Server error' });
   }
 };
 
 exports.getUserDailyProgress = async (req, res) => {
   try {
-    const userId = req.user.userId;
-    const dayPlan = req.params.dayPlan || req.query.dayPlan;
+    const userId = req.user._id;
+    // Get all questions grouped by day
+    const questions = await Question.find();
+    const progress = await Progress.find({
+      user: userId,
+      question: { $in: questions.map(q => q._id) }
+    });
 
-    console.log('Fetching daily progress:', { userId, dayPlan });
-
-    if (!dayPlan) {
-      return res.status(400).json({ message: 'Day parameter is required' });
-    }
-
-    const questions = await Question.find({ dayPlan: parseInt(dayPlan) })
-      .select('title difficulty topics dayPlan leetcodeSlug leetcodeUrl')
-      .lean();
-
-    console.log('Found questions for day:', questions.length, questions);
-
-    const progress = await UserProgress.find({
-      userId,
-      questionId: { $in: questions.map(q => q._id) }
-    })
-    .select('isSolved solutionUrl notes code language bookmarked lastUpdated')
-    .lean();
-
-    console.log('Found user progress:', progress.length, progress);
-
+    // Create a map of question progress
     const progressMap = new Map(
-      progress.map(p => [p.questionId.toString(), p])
+      progress.map(p => [p.question.toString(), p])
     );
 
-    const dailyProgress = questions.map(question => ({
-      ...question,
-      userProgress: progressMap.get(question._id.toString()) || null
-    }));
-
-    console.log('Final daily progress:', dailyProgress.length, dailyProgress);
+    // Calculate progress for each day
+    const dailyProgress = {};
+    questions.forEach(question => {
+      const day = question.dayPlan;
+      if (!dailyProgress[day]) {
+        dailyProgress[day] = {
+          total: 0,
+          solved: 0
+        };
+      }
+      dailyProgress[day].total++;
+      if (progressMap.get(question._id.toString())?.isSolved) {
+        dailyProgress[day].solved++;
+      }
+    });
 
     res.json(dailyProgress);
   } catch (error) {
-    console.error('Error fetching daily progress:', error);
+    console.error('Error fetching daily progress (controller):', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+exports.getUserDailyProgressByDay = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const day = parseInt(req.params.day);
+
+    const questions = await Question.find({ dayPlan: day });
+    const progress = await Progress.find({
+      user: userId,
+      question: { $in: questions.map(q => q._id) }
+    });
+
+    const progressMap = new Map(
+      progress.map(p => [p.question.toString(), p])
+    );
+
+    const dailyProgress = questions.map(question => ({
+      ...question.toObject(),
+      userProgress: progressMap.get(question._id.toString()) ? {
+        isSolved: progressMap.get(question._id.toString()).isSolved,
+        solutionUrl: progressMap.get(question._id.toString()).solutionUrl
+      } : {
+        isSolved: false,
+        solutionUrl: ''
+      }
+    }));
+
+    res.json(dailyProgress);
+  } catch (error) {
+    console.error('Error fetching progress for specific day (controller):', error);
     res.status(500).json({ message: 'Server error' });
   }
 };
 
 exports.getUserOverallProgress = async (req, res) => {
   try {
-    const userId = req.user.userId;
+    const userId = req.user._id;
 
     // Get all questions
     const totalQuestions = await Question.countDocuments();
 
     // Get user's solved questions
-    const solvedProgress = await UserProgress.find({
-      userId,
+    const solvedProgress = await Progress.find({
+      user: userId,
       isSolved: true
-    }).populate('questionId', 'title difficulty topics dayPlan leetcodeSlug leetcodeUrl');
+    }).populate('question', 'title difficulty topics dayPlan leetcodeSlug leetcodeUrl');
 
     // Calculate difficulty-wise counts
     const difficultyCounts = {
@@ -179,12 +198,12 @@ exports.getUserOverallProgress = async (req, res) => {
     const topicCounts = {};
 
     solvedProgress.forEach(progress => {
-      if (progress.questionId) {
+      if (progress.question) {
         // Count by difficulty
-        difficultyCounts[progress.questionId.difficulty]++;
+        difficultyCounts[progress.question.difficulty]++;
 
         // Count by topics
-        progress.questionId.topics.forEach(topic => {
+        progress.question.topics.forEach(topic => {
           topicCounts[topic] = (topicCounts[topic] || 0) + 1;
         });
       }
@@ -239,6 +258,88 @@ exports.getUserOverallProgress = async (req, res) => {
     res.json(response);
   } catch (error) {
     console.error('Error fetching overall progress:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+// New exports.getUserProgressByTopic function
+exports.getUserProgressByTopic = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const topic = req.params.topic;
+    
+    // Find all questions related to the specific topic
+    const questionsInTopic = await Question.find({ topics: topic });
+    const totalQuestionsInTopic = questionsInTopic.length;
+
+    // Find user's solved progress for questions in this topic
+    const solvedProgressInTopic = await Progress.find({
+      user: userId,
+      question: { $in: questionsInTopic.map(q => q._id) },
+      isSolved: true
+    });
+    const solvedCountInTopic = solvedProgressInTopic.length;
+
+    res.json({
+      topic: topic,
+      total: totalQuestionsInTopic,
+      solved: solvedCountInTopic
+    });
+  } catch (error) {
+    console.error('Error fetching user progress by topic (controller):', error); 
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+// New exports.updateOrCreateProgress function
+exports.updateOrCreateProgress = async (req, res) => {
+  try {
+    const { questionId } = req.params;
+    const { isSolved, solutionUrl, notes, code, language } = req.body;
+    const userId = req.user._id;
+
+    const updateFields = {
+      isSolved,
+      solutionUrl,
+      notes,
+      code,
+      language,
+      lastUpdated: new Date()
+    };
+
+    if (isSolved) {
+      updateFields.solvedAt = new Date();
+    }
+
+    const progress = await Progress.findOneAndUpdate(
+      { user: userId, question: questionId },
+      { $set: updateFields },
+      { new: true, upsert: true }
+    );
+
+    res.json(progress);
+  } catch (error) {
+    console.error('Error updating progress (controller):', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+// New exports.getSpecificUserProgress function
+exports.getSpecificUserProgress = async (req, res) => {
+  try {
+    const { questionId } = req.params;
+    const userId = req.user._id;
+
+    const progress = await Progress.findOne({ user: userId, question: questionId })
+      .populate('question', 'title difficulty topics dayPlan leetcodeSlug leetcodeUrl');
+
+    if (!progress) {
+      return res.status(404).json({ message: 'Progress not found' });
+    }
+
+    res.json(progress);
+  } catch (error) {
+    console.error('Error fetching specific progress (controller):', error);
     res.status(500).json({ message: 'Server error' });
   }
 }; 
