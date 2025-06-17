@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs');
 const User = require('../models/User');
 const Progress = require('../models/Progress');
 const { protect, authorize } = require('../middleware/auth');
+const usersController = require('../controllers/users');
 
 // Get user profile
 router.get('/profile', protect, async (req, res) => {
@@ -16,20 +17,7 @@ router.get('/profile', protect, async (req, res) => {
 });
 
 // Update user profile
-router.put('/profile', protect, async (req, res) => {
-  try {
-    const { name, leetcodeUsername } = req.body;
-    const user = await User.findById(req.user._id);
-
-    if (name) user.name = name;
-    if (leetcodeUsername) user.leetcodeUsername = leetcodeUsername;
-
-    await user.save();
-    res.json(user);
-  } catch (error) {
-    res.status(500).json({ message: 'Server error' });
-  }
-});
+router.put('/profile', protect, usersController.updateUserProfile);
 
 // Change password
 router.put('/change-password', protect, async (req, res) => {
