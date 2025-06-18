@@ -76,7 +76,8 @@ exports.getUserStats = async (req, res) => {
     // Calculate topic-wise stats
     const topicStats = {
       counts: {},
-      percentages: {}
+      percentages: {},
+      totals: {}
     };
 
     // Count solved questions by difficulty and topic
@@ -122,6 +123,11 @@ exports.getUserStats = async (req, res) => {
       topicStats.percentages[_id] = ((topicStats.counts[_id] || 0) / count) * 100;
     });
 
+    // Add totals to topicStats
+    totalByTopic.forEach(({ _id, count }) => {
+      topicStats.totals[_id] = count;
+    });
+
     // Calculate completion percentage
     const completionPercentage = (totalSolved / totalQuestions) * 100;
 
@@ -140,7 +146,11 @@ exports.getUserStats = async (req, res) => {
 
 exports.getAllSubmissions = async (req, res) => {
   try {
-    const submissions = await Progress.find()
+    const { userId, limit } = req.query;
+    const query = {};
+    if (userId) query.user = userId;
+
+    let submissionsQuery = Progress.find(query)
       .populate({
         path: 'user',
         select: 'name'
@@ -150,6 +160,12 @@ exports.getAllSubmissions = async (req, res) => {
         select: 'title topics'
       })
       .sort({ createdAt: -1 });
+
+    if (limit) {
+      submissionsQuery = submissionsQuery.limit(Number(limit));
+    }
+
+    const submissions = await submissionsQuery;
 
     const formattedSubmissions = submissions.map(submission => ({
       _id: submission._id,
