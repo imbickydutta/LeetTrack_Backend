@@ -31,12 +31,10 @@ exports.getAllUsers = async (req, res) => {
       totalSolved: userProgressMap.get(user._id.toString()) || 0
     }));
 
-    // Sort by totalSolved and get top 10
-    const topUsers = usersWithProgress
-      .sort((a, b) => b.totalSolved - a.totalSolved)
-      .slice(0, 10);
+    // Sort by totalSolved (descending)
+    const usersWithProgressSorted = usersWithProgress.sort((a, b) => b.totalSolved - a.totalSolved);
 
-    res.json(topUsers);
+    res.json(usersWithProgressSorted);
   
   } catch (error) {
     console.error('Error fetching users:', error);
